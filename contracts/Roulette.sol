@@ -18,7 +18,7 @@ contract Roulette {
 
     mapping (address => mapping (uint256 => bool)) public isClaimed;
 
-    mapping(uint256 => Round) public rounds;
+    mapping(uint256 => RoundInfo) public rounds;
 
     uint256 public currentRoundId;
 
@@ -36,13 +36,14 @@ contract Roulette {
         _;
     }
 
+    event Withdrawed(address indexed user, uint256 amount);
+    event Rolled(uint256 indexed roundId, RouletteResult result, uint256 rewardAmount, uint256 feeAmount);
+    event Claimed(uint256 indexed roundId, address indexed better, uint256 betAmount);
+
+
     constructor() {
         _owner = msg.sender;
         poolFee = 10;
-    }
-
-    function setTicketPrice(uint256 price) public onlyOwner {
-        _ticket_price = price;
     }
 
     function bet(RouletteResult betOption) payable external {
@@ -60,7 +61,7 @@ contract Roulette {
 
     function withdraw() external {
         uint256 userDeposited = depositByAddress[msg.sender];
-        require(userDeposited, "You did NOT deposited!");
+        require(userDeposited > 0, "You did NOT deposited!");
         depositByAddress[msg.sender] = 0;
         uint256 withdrawAmount = userDeposited * rewardPool / totalDeposited;
         totalDeposited -= withdrawAmount;
@@ -71,7 +72,7 @@ contract Roulette {
         (bool sent, ) = address(msg.sender).call{value: withdrawAmount}("");
         require(sent, "Sendout reward failed!");
         
-        emit Withdrawed(msg.sender, withdrawAmount)
+        emit Withdrawed(msg.sender, withdrawAmount);
     }
 
     function roll() onlyOwner external {
@@ -102,31 +103,32 @@ contract Roulette {
         require(!isClaimed[msg.sender][roundId], "You already claimed!");
         uint256 userBetted = thisRound.betByAddress[msg.sender][thisRound.result];
         require(userBetted > 0, "Not Bet on this result ;))");
-        uint256 claiming = userBetted * thisRound.rewarded / thisRound.totalBettedByResult;
+        uint256 claiming = userBetted * thisRound.rewarded / thisRound.totalBettedByResult[thisRound.result];
         (bool sent, ) = address(msg.sender).call{value: claiming}("");
         require(sent, "Sendout reward failed!");
         
         emit Claimed(roundId, msg.sender, claiming);
     }
 
-    function setFee(uint fee) public onlyOwner {
+    function setFee(uint256 fee) public onlyOwner {
         require(fee < 100, "Setting Fee: invalid fee");
         poolFee = fee;
     }
 
-    function _random() private view returns (uint){
-        return uint(keccak256(abi.encodePacked(gasLeft(),block.timestamp, block.difficulty, msg.sender))) % 3;
+    function _random() private view returns (uint256){
+        return uint(keccak256(abi.encodePacked(gasleft(),block.timestamp, block.difficulty, msg.sender))) % 3;
     }
 
-    function getRoundInfo(uint round_index) public view returns(uint, uint256, uint, uint256, uint, uint) {
-        Round memory round = rounds[round_index];
-        return (round_index, round.start_time, round.result, round.ticket_price, round.amount_h, round.amount_t);
-    }
-
-    function withdraw(uint256 amount) public payable onlyOwner {
-        require(_pool_balance >= amount, "Balance: not enought");
-        payable(msg.sender).transfer(amount);
-        _pool_balance = _pool_balance - amount;
+    function getRoundInfo(uint256 round_index) public view returns(uint256 roundId, bool isRolled, RouletteResult result, uint256 totalBetted, uint256 totalAmountByAVAX, uint256 totalAmountByBTC, uint256 totalAmountBySOL , uint256 rewarded) {
+        RoundInfo storage round = rounds[round_index];
+        roundId = round_index;
+        isRolled = round.isFinished;
+        result = round.result;
+        totalBetted = round.totalBetted;
+        totalAmountByAVAX = round.totalBettedByResult[RouletteResult.AVAX];
+        totalAmountByBTC = round.totalBettedByResult[RouletteResult.BTC];
+        totalAmountBySOL = round.totalBettedByResult[RouletteResult.SOL];
+        rewarded = round.rewarded;
     }
 
     struct Call {
