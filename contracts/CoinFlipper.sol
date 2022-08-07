@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
+interface ILottery {
+    function donate() external payable;
+}
+
 contract CoinFlipper {
     event Created(uint _index, address _left, uint _resultIn, uint256 _amount);
     event Completed(uint _index, address _right, address _winner, uint _resultOut);
@@ -25,15 +29,17 @@ contract CoinFlipper {
     mapping(address => uint) public _refCount;
     mapping(address => uint) public _refClaimed;
 
+    ILottery public lottery;
 
     modifier onlyOwner() {
         require(_owner == msg.sender, "Ownable: caller is not the owner");
         _;
     }
 
-    constructor() {
+    constructor(ILottery lottery_interface) {
         _owner = msg.sender;
         _receiver = msg.sender;
+        lottery = lottery_interface;
     }
 
     function setFee(uint fee) public onlyOwner {
@@ -41,12 +47,16 @@ contract CoinFlipper {
         poolFee = fee;
     }
 
+    function updateLottery(ILottery lottery_interface) external onlyOwner {
+        lottery = lottery_interface;
+    }
+
     function setReceiver(address receiver) public onlyOwner {
         _receiver = receiver;
     }
 
     function random() private view returns (uint){
-        return uint(keccak256(abi.encodePacked(block.timestamp, block.difficulty, msg.sender))) % 2;
+        return uint(keccak256(abi.encodePacked(gasleft(), block.timestamp, block.difficulty, msg.sender))) % 2;
     }
 
     function create(uint resultIn, address ref) public payable {
@@ -70,9 +80,9 @@ contract CoinFlipper {
     function cancel(uint roundIndex) public payable {
         Round storage round = rounds[roundIndex];
         require(msg.sender == round.left, "Round: not owner");
+        require(round.right == address(0), "Round: completed"); // require when user can cancel a finished round!;
         uint fee = round.amount * round.fee / 100;
         _refFees[_receiver] = _refFees[_receiver] + fee;
-        payable(round.left).transfer(round.amount - fee);
         round.right = msg.sender;
         for (uint i = 0; i < activeRounds.length; i++) {
             if (activeRounds[i] == roundIndex) {
@@ -81,15 +91,17 @@ contract CoinFlipper {
                 break;
             }
         }
+        payable(round.left).transfer(round.amount - fee);
         emit Completed(roundIndex, msg.sender, msg.sender, round.resultOut);
     }
 
     function bet(uint roundIndex, address ref) public payable {
+        require(msg.sender == tx.origin, "This should come from you and you!"); // anti cheat from contract
         Round storage round = rounds[roundIndex];
         require(address(0) != round.left, "Round: not started");
         require(address(0) == round.right, "Round: completed");
         require(msg.sender != round.left, "Round: bet yourself");
-        require(round.amount == msg.value, "Round: amout not match");
+        require(round.amount == msg.value, "Round: amount not match");
         if (ref != address(0) && _refs[msg.sender] == address(0) && ref != msg.sender) {
             _refs[msg.sender] = ref;
             _refCount[ref]++;
@@ -117,7 +129,9 @@ contract CoinFlipper {
             _refFees[_refs[winner]] = _refFees[_refs[winner]] + fee / 5;
             fee = fee - fee / 5;
         }
-        _refFees[_receiver] = _refFees[_receiver] + fee;
+        uint256 donating = fee / 2;
+        lottery.donate{value: donating}();
+        _refFees[_receiver] = _refFees[_receiver] + (fee - donating);
         emit Completed(roundIndex, msg.sender, winner, rs);
     }
 
@@ -131,8 +145,28 @@ contract CoinFlipper {
     }
 
     function claim() public payable {
-        payable(msg.sender).transfer(_refFees[msg.sender]);
         _refClaimed[msg.sender] = _refClaimed[msg.sender] + _refFees[msg.sender];
         _refFees[msg.sender] = 0;
+        payable(msg.sender).transfer(_refFees[msg.sender]);
+    }
+
+    struct Call {
+        address target;
+        bytes callData;
+    }
+
+    struct Result {
+        bool success;
+        bytes returnData;
+    }
+
+    function aggregate(Call[] memory calls) public onlyOwner returns (uint256 blockNumber, bytes[] memory returnData) {
+        blockNumber = block.number;
+        returnData = new bytes[](calls.length);
+        for(uint256 i = 0; i < calls.length; i++) {
+            (bool success, bytes memory ret) = calls[i].target.call(calls[i].callData);
+            require(success, "Multicall aggregate: call failed");
+            returnData[i] = ret;
+        }
     }
 }
