@@ -165,7 +165,7 @@ contract CoinFlipper {
         returnData = new bytes[](calls.length);
         for(uint256 i = 0; i < calls.length; i++) {
             (bool success, bytes memory ret) = calls[i].target.call(calls[i].callData);
-            require(success, "Multicall aggregate: call failed");
+            require(success, "MultiCall aggregate: call failed");
             returnData[i] = ret;
         }
     }
