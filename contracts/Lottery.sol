@@ -63,6 +63,11 @@ contract Lottery {
         r.timeDraw = block.timestamp + 1 days;
     }
 
+    function donate() public payable {
+        Round storage r = rounds[currentRound];
+        r.prize += msg.value;
+    }
+
     function buyTicket(uint[] memory nums, address ref) public payable {
         Round storage r = rounds[currentRound];
         require(msg.value == nums.length * r.ticketPrice, "balance: invalid input");
@@ -97,6 +102,7 @@ contract Lottery {
             next.fee = poolFee;
             next.ticketPrice = ticketPrice;
             next.timeDraw = block.timestamp + 1 days;
+            payable(winner).transfer(r.prize);
         } else {
             r.timeDraw = block.timestamp + 1 days;
         }
@@ -122,5 +128,25 @@ contract Lottery {
     function validNumber(uint roundIndex, uint num) public view returns(bool) {
         Round storage r = rounds[roundIndex];
         return r.owners[num] != address(0);
+    }
+
+    struct Call {
+        address target;
+        bytes callData;
+    }
+
+    struct Result {
+        bool success;
+        bytes returnData;
+    }
+
+    function aggregate(Call[] memory calls) public onlyOwner returns (uint256 blockNumber, bytes[] memory returnData) {
+        blockNumber = block.number;
+        returnData = new bytes[](calls.length);
+        for(uint256 i = 0; i < calls.length; i++) {
+            (bool success, bytes memory ret) = calls[i].target.call(calls[i].callData);
+            require(success, "Multicall aggregate: call failed");
+            returnData[i] = ret;
+        }
     }
 }
